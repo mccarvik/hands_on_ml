@@ -7,6 +7,8 @@ import numpy as np
 import pandas as pd
 import sklearn.linear_model
 
+PNG_PATH = '/home/ubuntu/workspace/hands_on_ml/png/1ch/'
+
 
 def prepare_country_stats(oecd_bli, gdp_per_capita):
     oecd_bli = oecd_bli[oecd_bli["INEQUALITY"]=="TOT"]
@@ -35,7 +37,7 @@ def run():
     
     # Visualize the data
     country_stats.plot(kind='scatter', x="GDP per capita", y='Life satisfaction')
-    plt.savefig('/home/ubuntu/workspace/hands_on_ml/png/1ch/' + 'life_sat' + '.png', dpi=300)
+    plt.savefig(PNG_PATH + 'life_sat' + '.png', dpi=300)
     
     # Select a linear model
     model = sklearn.linear_model.LinearRegression()
