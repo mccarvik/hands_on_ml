@@ -5,12 +5,15 @@ import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pyplot as plt
 from pandas.plotting import scatter_matrix
-from sklearn.model_selection import train_test_split, StratifiedShuffleSplit
+from sklearn.model_selection import train_test_split, StratifiedShuffleSplit, cross_val_score, GridSearchCV
 from sklearn.preprocessing import Imputer, OneHotEncoder, StandardScaler
 # from sklearn.preprocessing import CategoricalEncoder
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.pipeline import Pipeline, FeatureUnion
 from sklearn.linear_model import LinearRegression
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 
 
 HOUSING_PATH = os.path.join("datasets", "housing")
@@ -19,6 +22,56 @@ PNG_PATH = '/home/ubuntu/workspace/hands_on_ml/png/2ch/'
 # column index
 rooms_ix, bedrooms_ix, population_ix, household_ix = 3, 4, 5, 6
 
+
+def fine_tune():
+    housing = load_housing_data()
+    housing["income_cat"] = np.ceil(housing["median_income"] / 1.5)
+    housing["income_cat"].where(housing["income_cat"] < 5, 5.0, inplace=True)
+    split = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
+    for train_index, test_index in split.split(housing, housing["income_cat"]):
+        strat_train_set = housing.loc[train_index]
+        strat_test_set = housing.loc[test_index]
+    
+    housing = strat_train_set.drop("median_house_value", axis=1) # drop labels for training set
+    housing_labels = strat_train_set["median_house_value"].copy()
+    sample_incomplete_rows = housing[housing.isnull().any(axis=1)].head()
+    housing_num = housing.drop('ocean_proximity', axis=1)
+    
+    num_pipeline = Pipeline([
+            ('imputer', Imputer(strategy="median")),
+            ('attribs_adder', CombinedAttributesAdder()),
+            ('std_scaler', StandardScaler()),
+    ])
+
+    housing_num_tr = num_pipeline.fit_transform(housing_num)
+    
+    param_grid = [
+        # try 12 (3×4) combinations of hyperparameters
+        {'n_estimators': [3, 10, 30], 'max_features': [2, 4, 6, 8]},
+        # then try 6 (2×3) combinations with bootstrap set as False
+        {'bootstrap': [False], 'n_estimators': [3, 10], 'max_features': [2, 3, 4]},
+    ]
+
+    forest_reg = RandomForestRegressor(random_state=42)
+    # train across 5 folds, that's a total of (12+6)*5=90 rounds of training 
+    grid_search = GridSearchCV(forest_reg, param_grid, cv=5, scoring='neg_mean_squared_error', return_train_score=True)
+    grid_search.fit(housing_num_tr, housing_labels)
+    print(grid_search.best_params_)
+    
+    cvres = grid_search.cv_results_
+    for mean_score, params in zip(cvres["mean_test_score"], cvres["params"]):
+        print(np.sqrt(-mean_score), params)
+    
+    feature_importances = grid_search.best_estimator_.feature_importances_
+    print(feature_importances)
+    
+    # Wont work, cat_encoder not included in sklearn yet
+    # extra_attribs = ["rooms_per_hhold", "pop_per_hhold", "bedrooms_per_room"]
+    # cat_encoder = cat_pipeline.named_steps["cat_encoder"]
+    # cat_one_hot_attribs = list(cat_encoder.categories_[0])
+    # attributes = num_attribs + extra_attribs + cat_one_hot_attribs
+    # sorted(zip(feature_importances, attributes), reverse=True)
+    
 
 def select_and_train():
     housing = load_housing_data()
@@ -50,7 +103,35 @@ def select_and_train():
 
     print("Predictions:", lin_reg.predict(some_data_prepared))
     print("Labels:", list(some_labels))
-    print(some_data_prepared)
+    # print(some_data_prepared)
+    
+    housing_predictions = lin_reg.predict(housing_num_tr)
+    lin_mse = mean_squared_error(housing_labels, housing_predictions)
+    lin_rmse = np.sqrt(lin_mse)
+    print(lin_rmse)
+    lin_mae = mean_absolute_error(housing_labels, housing_predictions)
+    print(lin_mae)
+
+    tree_reg = DecisionTreeRegressor(random_state=42)
+    tree_reg.fit(housing_num_tr, housing_labels)
+    housing_predictions = tree_reg.predict(housing_num_tr)
+    tree_mse = mean_squared_error(housing_labels, housing_predictions)
+    tree_rmse = np.sqrt(tree_mse)
+    print(tree_rmse)
+
+    scores = cross_val_score(tree_reg, housing_num_tr, housing_labels, scoring="neg_mean_squared_error", cv=10)
+    tree_rmse_scores = np.sqrt(-scores)
+    display_scores(tree_rmse_scores)
+
+    forest_reg = RandomForestRegressor(random_state=42)
+    forest_reg.fit(housing_num_tr, housing_labels)
+    housing_predictions = forest_reg.predict(housing_num_tr)
+    forest_mse = mean_squared_error(housing_labels, housing_predictions)
+    forest_rmse = np.sqrt(forest_mse)
+    print(forest_rmse)
+    forest_scores = cross_val_score(forest_reg, housing_num_tr, housing_labels, scoring="neg_mean_squared_error", cv=10)
+    forest_rmse_scores = np.sqrt(-forest_scores)
+    display_scores(forest_rmse_scores)
 
 
 def run():
@@ -237,6 +318,12 @@ def load_housing_data(housing_path=HOUSING_PATH):
     return pd.read_csv(csv_path)
 
 
+def display_scores(scores):
+    print("Scores:", scores)
+    print("Mean:", scores.mean())
+    print("Standard deviation:", scores.std())
+
+
 class CombinedAttributesAdder(BaseEstimator, TransformerMixin):
     def __init__(self, add_bedrooms_per_room = True): # no *args or **kargs
         self.add_bedrooms_per_room = add_bedrooms_per_room
@@ -267,9 +354,16 @@ class DataFrameSelector(BaseEstimator, TransformerMixin):
         return X[self.attribute_names].values
 
 
+# Use this to save your model to reload later
+# from sklearn.externals import joblib
+# joblib.dump(my_model, "my_model.pkl")
+# my_model_loadeed = loblib.load("my_model.pkl")
+
+
 if __name__ == '__main__':
     # run()
     # explore_data()
     # prepare_data()
     # transformers()
-    select_and_train()
+    # select_and_train()
+    fine_tune()
