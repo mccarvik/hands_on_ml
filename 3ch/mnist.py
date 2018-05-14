@@ -10,6 +10,9 @@ from sklearn.model_selection import cross_val_score, StratifiedKFold, cross_val_
 from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score, precision_recall_curve, roc_curve, roc_auc_score
 from sklearn.base import clone, BaseEstimator
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.multiclass import OneVsOneClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.neighbors import KNeighborsClassifier
 
 PNG_PATH = '/home/ubuntu/workspace/hands_on_ml/png/3ch/'
 
@@ -28,8 +31,95 @@ def setup():
     shuffle_index = np.random.permutation(60000)
     X_train, y_train = X_train[shuffle_index], y_train[shuffle_index]
     # binary_classifier(X_train, X_test, y_train, y_test)
-    roc_curve_demo(X_train, X_test, y_train, y_test)
+    # roc_curve_demo(X_train, X_test, y_train, y_test)
+    # multiclass(X_train, X_test, y_train, y_test)
+    multiclass_output(X_train, X_test, y_train, y_test)
+ 
+ 
+def multiclass_output(X_train, X_test, y_train, y_test):
+    some_digit = X_train[20000]
+    y_train_large = (y_train >= 7)
+    y_train_odd = (y_train % 2 == 1)
+    y_multilabel = np.c_[y_train_large, y_train_odd]
 
+    knn_clf = KNeighborsClassifier()
+    # knn_clf.fit(X_train, y_multilabel)
+    # print(knn_clf.predict([some_digit]))
+    # y_train_knn_pred = cross_val_predict(knn_clf, X_train, y_multilabel, cv=3, n_jobs=-1)
+    # print(f1_score(y_multilabel, y_train_knn_pred, average="macro"))
+
+    noise = np.random.randint(0, 100, (len(X_train), 784))
+    X_train_mod = X_train + noise
+    noise = np.random.randint(0, 100, (len(X_test), 784))
+    X_test_mod = X_test + noise
+    y_train_mod = X_train
+    y_test_mod = X_test
+    
+    some_index = 5500
+    plt.subplot(121); plot_digit(X_test_mod[some_index])
+    plt.subplot(122); plot_digit(y_test_mod[some_index])
+    plt.savefig(PNG_PATH + "noisy_digit_example_plot.png", tight_layout=False, dpi=300)
+    plt.close()
+
+    knn_clf.fit(X_train_mod, y_train_mod)
+    clean_digit = knn_clf.predict([X_test_mod[some_index]])
+    plot_digit(clean_digit)
+    plt.savefig(PNG_PATH + "cleaned_digit_example_plot.png", tight_layout=False, dpi=300)
+    plt.close()
+ 
+
+def multiclass(X_train, X_test, y_train, y_test):
+    some_digit = X_train[20000]
+    sgd_clf = SGDClassifier(max_iter=5, random_state=42)
+    # sgd_clf.fit(X_train, y_train)
+    # print(sgd_clf.predict([some_digit]))
+    # print(sgd_clf.decision_function([some_digit]))
+    
+    # ovo_clf = OneVsOneClassifier(SGDClassifier(max_iter=5, random_state=42))
+    # ovo_clf.fit(X_train, y_train)
+    # print(ovo_clf.predict([some_digit]))
+    # print(len(ovo_clf.estimators_))
+    
+    # forest_clf = RandomForestClassifier(random_state=42)
+    # forest_clf.fit(X_train, y_train)
+    # print(forest_clf.predict([some_digit]))
+    # print(forest_clf.predict_proba([some_digit]))
+    # print(cross_val_score(sgd_clf, X_train, y_train, cv=3, scoring="accuracy"))
+    
+    # scaler = StandardScaler()
+    # X_train_scaled = scaler.fit_transform(X_train.astype(np.float64))
+    # print(cross_val_score(sgd_clf, X_train_scaled, y_train, cv=3, scoring="accuracy"))
+    
+    y_train_pred = cross_val_predict(sgd_clf, X_train, y_train, cv=3)
+    # y_train_pred = cross_val_predict(sgd_clf, X_train_scaled, y_train, cv=3)
+    conf_mx = confusion_matrix(y_train, y_train_pred)
+    print(conf_mx)
+
+    # plt.matshow(conf_mx, cmap=plt.cm.gray)
+    # plt.savefig(PNG_PATH + "confusion_matrix_plot.png", tight_layout=False, dpi=300)
+    # plt.close()
+    
+    # row_sums = conf_mx.sum(axis=1, keepdims=True)
+    # norm_conf_mx = conf_mx / row_sums
+    # np.fill_diagonal(norm_conf_mx, 0)
+    # plt.matshow(norm_conf_mx, cmap=plt.cm.gray)
+    # plt.savefig(PNG_PATH + "confusion_matrix_errors_plot.png", tight_layout=False, dpi=300)
+    # plt.close()
+    
+    cl_a, cl_b = 3, 5
+    X_aa = X_train[(y_train == cl_a) & (y_train_pred == cl_a)]
+    X_ab = X_train[(y_train == cl_a) & (y_train_pred == cl_b)]
+    X_ba = X_train[(y_train == cl_b) & (y_train_pred == cl_a)]
+    X_bb = X_train[(y_train == cl_b) & (y_train_pred == cl_b)]
+    
+    plt.figure(figsize=(8,8))
+    plt.subplot(221); plot_digits(X_aa[:25], images_per_row=5)
+    plt.subplot(222); plot_digits(X_ab[:25], images_per_row=5)
+    plt.subplot(223); plot_digits(X_ba[:25], images_per_row=5)
+    plt.subplot(224); plot_digits(X_bb[:25], images_per_row=5)
+    plt.savefig(PNG_PATH + "error_analysis_digits_plot.png", dpi=300)
+    plt.close()
+    
 
 def roc_curve_demo(X_train, X_test, y_train, y_test):
     y_train_5 = (y_train == 5)
@@ -62,7 +152,6 @@ def roc_curve_demo(X_train, X_test, y_train, y_test):
     y_train_pred_forest = cross_val_predict(forest_clf, X_train, y_train_5, cv=3)
     print(precision_score(y_train_5, y_train_pred_forest))
     print(recall_score(y_train_5, y_train_pred_forest))
-    
     
     
 def binary_classifier(X_train, X_test, y_train, y_test):
@@ -167,8 +256,34 @@ def plot_roc_curve(fpr, tpr, label=None):
     plt.ylabel('True Positive Rate', fontsize=16)
 
 
+def plot_confusion_matrix(matrix):
+    """If you prefer color and a colorbar"""
+    fig = plt.figure(figsize=(8,8))
+    ax = fig.add_subplot(111)
+    cax = ax.matshow(matrix)
+    fig.colorbar(cax)
 
 
+def plot_digit(data):
+    image = data.reshape(28, 28)
+    plt.imshow(image, cmap = mpl.cm.binary, interpolation="nearest")
+    plt.axis("off")
+
+
+def plot_digits(instances, images_per_row=10, **options):
+    size = 28
+    images_per_row = min(len(instances), images_per_row)
+    images = [instance.reshape(size,size) for instance in instances]
+    n_rows = (len(instances) - 1) // images_per_row + 1
+    row_images = []
+    n_empty = n_rows * images_per_row - len(instances)
+    images.append(np.zeros((size, size * n_empty)))
+    for row in range(n_rows):
+        rimages = images[row * images_per_row : (row + 1) * images_per_row]
+        row_images.append(np.concatenate(rimages, axis=1))
+    image = np.concatenate(row_images, axis=0)
+    plt.imshow(image, cmap = mpl.cm.binary, **options)
+    plt.axis("off")
 
 
 
