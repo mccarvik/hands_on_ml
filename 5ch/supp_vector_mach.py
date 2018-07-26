@@ -1,16 +1,154 @@
-import os, pdb
+import os, pdb, time
 import numpy as np
 import pandas as pd
 import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 from sklearn import datasets
 from sklearn.svm import SVC, LinearSVC, LinearSVR, SVR
 from sklearn.preprocessing import StandardScaler, PolynomialFeatures
 from sklearn.pipeline import Pipeline
 from sklearn.datasets import make_moons
+from sklearn.base import BaseEstimator
+from sklearn.linear_model import SGDClassifier
 
 PNG_PATH = '/home/ubuntu/workspace/hands_on_ml/png/5ch/'
+
+
+def extra_material():
+    X, y = make_moons(n_samples=1000, noise=0.4, random_state=42)
+    # plt.plot(X[:, 0][y==0], X[:, 1][y==0], "bs")
+    # plt.plot(X[:, 0][y==1], X[:, 1][y==1], "g^")
+    # plt.savefig(PNG_PATH + "extra_moons", dpi=300)
+    # plt.close()
+    
+    # tol = 0.1
+    # tols = []
+    # times = []
+    # for i in range(10):
+    #     svm_clf = SVC(kernel="poly", gamma=3, C=10, tol=tol, verbose=1)
+    #     t1 = time.time()
+    #     svm_clf.fit(X, y)
+    #     t2 = time.time()
+    #     times.append(t2-t1)
+    #     tols.append(tol)
+    #     print(i, tol, t2-t1)
+    #     tol /= 10
+    # plt.semilogx(tols, times)
+    # plt.savefig(PNG_PATH + "learning_time", dpi=300)
+    # plt.close()
+    
+    # Training set
+    iris = datasets.load_iris()
+    X = iris["data"][:, (2, 3)] # petal length, petal width
+    y = (iris["target"] == 2).astype(np.float64).reshape(-1, 1) # Iris-Virginica
+    
+    C=2
+    svm_clf = MyLinearSVC(C=C, eta0 = 10, eta_d = 1000, n_epochs=60000, random_state=2)
+    pdb.set_trace()
+    svm_clf.fit(X, y)
+    svm_clf.predict(np.array([[5, 2], [4, 1]]))
+    plt.plot(range(svm_clf.n_epochs), svm_clf.Js)
+    plt.axis([0, svm_clf.n_epochs, 0, 100])
+    plt.savefig(PNG_PATH + "svm_cost_vs_epochs", dpi=300)
+    plt.close()
+    
+    print(svm_clf.intercept_, svm_clf.coef_)
+    svm_clf2 = SVC(kernel="linear", C=C)
+    svm_clf2.fit(X, y.ravel())
+    print(svm_clf2.intercept_, svm_clf2.coef_)
+    
+    yr = y.ravel()
+    plt.figure(figsize=(12,3.2))
+    plt.subplot(121)
+    plt.plot(X[:, 0][yr==1], X[:, 1][yr==1], "g^", label="Iris-Virginica")
+    plt.plot(X[:, 0][yr==0], X[:, 1][yr==0], "bs", label="Not Iris-Virginica")
+    plot_svc_decision_boundary(svm_clf, 4, 6)
+    plt.xlabel("Petal length", fontsize=14)
+    plt.ylabel("Petal width", fontsize=14)
+    plt.title("MyLinearSVC", fontsize=14)
+    plt.axis([4, 6, 0.8, 2.8])
+    
+    plt.subplot(122)
+    plt.plot(X[:, 0][yr==1], X[:, 1][yr==1], "g^")
+    plt.plot(X[:, 0][yr==0], X[:, 1][yr==0], "bs")
+    plot_svc_decision_boundary(svm_clf2, 4, 6)
+    plt.xlabel("Petal length", fontsize=14)
+    plt.title("SVC", fontsize=14)
+    plt.axis([4, 6, 0.8, 2.8])
+    
+    plt.savefig(PNG_PATH + "mine_vs_theirs", dpi=300)
+    plt.close()
+    
+    sgd_clf = SGDClassifier(loss="hinge", alpha = 0.017, max_iter = 50, random_state=42)
+    sgd_clf.fit(X, y.ravel())
+    
+    m = len(X)
+    t = y * 2 - 1  # -1 if t==0, +1 if t==1
+    X_b = np.c_[np.ones((m, 1)), X]  # Add bias input x0=1
+    X_b_t = X_b * t
+    sgd_theta = np.r_[sgd_clf.intercept_[0], sgd_clf.coef_[0]]
+    print(sgd_theta)
+    support_vectors_idx = (X_b_t.dot(sgd_theta) < 1).ravel()
+    sgd_clf.support_vectors_ = X[support_vectors_idx]
+    sgd_clf.C = C
+    
+    plt.figure(figsize=(5.5,3.2))
+    plt.plot(X[:, 0][yr==1], X[:, 1][yr==1], "g^")
+    plt.plot(X[:, 0][yr==0], X[:, 1][yr==0], "bs")
+    plot_svc_decision_boundary(sgd_clf, 4, 6)
+    plt.xlabel("Petal length", fontsize=14)
+    plt.ylabel("Petal width", fontsize=14)
+    plt.title("SGDClassifier", fontsize=14)
+    plt.axis([4, 6, 0.8, 2.8])
+    plt.savefig(PNG_PATH + "sgd_clssifier", dpi=300)
+    plt.close()
+    
+
+def under_the_hood():
+    iris = datasets.load_iris()
+    X = iris["data"][:, (2, 3)]  # petal length, petal width
+    y = (iris["target"] == 2).astype(np.float64)  # Iris-Virginica
+    
+    X_outliers = np.array([[3.4, 1.3], [3.2, 0.8]])
+    y_outliers = np.array([0, 0])
+    Xo1 = np.concatenate([X, X_outliers[:1]], axis=0)
+    yo1 = np.concatenate([y, y_outliers[:1]], axis=0)
+    Xo2 = np.concatenate([X, X_outliers[1:]], axis=0)
+    yo2 = np.concatenate([y, y_outliers[1:]], axis=0)
+    
+    svm_clf2 = SVC(kernel="linear", C=10**9)
+    svm_clf2.fit(Xo2, yo2)
+    
+    fig = plt.figure(figsize=(11, 6))
+    ax1 = fig.add_subplot(111, projection='3d')
+    plot_3D_decision_function(X, y, ax1, w=svm_clf2.coef_[0], b=svm_clf2.intercept_[0])
+    plt.savefig(PNG_PATH + "iris_3D_plot", dpi=300)
+    plt.close()
+    
+    plt.figure(figsize=(12, 3.2))
+    plt.subplot(121)
+    plot_2D_decision_function(1, 0)
+    plt.subplot(122)
+    plot_2D_decision_function(0.5, 0, ylabel=False)
+    plt.savefig(PNG_PATH + "small_w_large_margin_plot", dpi=300)
+    plt.close()
+    
+    t = np.linspace(-2, 4, 200)
+    h = np.where(1 - t < 0, 0, 1 - t)  # max(0, 1-t)
+    
+    plt.figure(figsize=(5,2.8))
+    plt.plot(t, h, "b-", linewidth=2, label="$max(0, 1 - t)$")
+    plt.grid(True, which='both')
+    plt.axhline(y=0, color='k')
+    plt.axvline(x=0, color='k')
+    plt.yticks(np.arange(-1, 2.5, 1))
+    plt.xlabel("$t$", fontsize=16)
+    plt.axis([-2, 4, -1, 2.5])
+    plt.legend(loc="upper right", fontsize=16)
+    plt.savefig(PNG_PATH + "hinge_plot", dpi=300)
+    plt.close()
 
 
 def regression():
@@ -483,8 +621,112 @@ def plot_svm_regression(svm_reg, X, y, axes):
         plt.axis(axes)
 
 
+def plot_3D_decision_function(X, y, ax, w, b, x1_lim=[4, 6], x2_lim=[0.8, 2.8]):
+    x1_in_bounds = (X[:, 0] > x1_lim[0]) & (X[:, 0] < x1_lim[1])
+    X_crop = X[x1_in_bounds]
+    y_crop = y[x1_in_bounds]
+    x1s = np.linspace(x1_lim[0], x1_lim[1], 20)
+    x2s = np.linspace(x2_lim[0], x2_lim[1], 20)
+    x1, x2 = np.meshgrid(x1s, x2s)
+    xs = np.c_[x1.ravel(), x2.ravel()]
+    df = (xs.dot(w) + b).reshape(x1.shape)
+    m = 1 / np.linalg.norm(w)
+    boundary_x2s = -x1s*(w[0]/w[1])-b/w[1]
+    margin_x2s_1 = -x1s*(w[0]/w[1])-(b-1)/w[1]
+    margin_x2s_2 = -x1s*(w[0]/w[1])-(b+1)/w[1]
+    ax.plot_surface(x1s, x2, np.zeros_like(x1),
+                    color="b", alpha=0.2, cstride=100, rstride=100)
+    ax.plot(x1s, boundary_x2s, 0, "k-", linewidth=2, label=r"$h=0$")
+    ax.plot(x1s, margin_x2s_1, 0, "k--", linewidth=2, label=r"$h=\pm 1$")
+    ax.plot(x1s, margin_x2s_2, 0, "k--", linewidth=2)
+    ax.plot(X_crop[:, 0][y_crop==1], X_crop[:, 1][y_crop==1], 0, "g^")
+    ax.plot_wireframe(x1, x2, df, alpha=0.3, color="k")
+    ax.plot(X_crop[:, 0][y_crop==0], X_crop[:, 1][y_crop==0], 0, "bs")
+    ax.axis(x1_lim + x2_lim)
+    ax.text(4.5, 2.5, 3.8, "Decision function $h$", fontsize=15)
+    ax.set_xlabel(r"Petal length", fontsize=15)
+    ax.set_ylabel(r"Petal width", fontsize=15)
+    ax.set_zlabel(r"$h = \mathbf{w}^T \mathbf{x} + b$", fontsize=18)
+    ax.legend(loc="upper left", fontsize=16)
+
+
+def plot_2D_decision_function(w, b, ylabel=True, x1_lim=[-3, 3]):
+    x1 = np.linspace(x1_lim[0], x1_lim[1], 200)
+    y = w * x1 + b
+    m = 1 / w
+
+    plt.plot(x1, y)
+    plt.plot(x1_lim, [1, 1], "k:")
+    plt.plot(x1_lim, [-1, -1], "k:")
+    plt.axhline(y=0, color='k')
+    plt.axvline(x=0, color='k')
+    plt.plot([m, m], [0, 1], "k--")
+    plt.plot([-m, -m], [0, -1], "k--")
+    plt.plot([-m, m], [0, 0], "k-o", linewidth=3)
+    plt.axis(x1_lim + [-2, 2])
+    plt.xlabel(r"$x_1$", fontsize=16)
+    if ylabel:
+        plt.ylabel(r"$w_1 x_1$  ", rotation=0, fontsize=16)
+    plt.title(r"$w_1 = {}$".format(w), fontsize=16)
+
+
+class MyLinearSVC(BaseEstimator):
+    def __init__(self, C=1, eta0=1, eta_d=10000, n_epochs=1000, random_state=None):
+        self.C = C
+        self.eta0 = eta0
+        self.n_epochs = n_epochs
+        self.random_state = random_state
+        self.eta_d = eta_d
+
+    def eta(self, epoch):
+        return self.eta0 / (epoch + self.eta_d)
+        
+    def fit(self, X, y):
+        # Random initialization
+        if self.random_state:
+            np.random.seed(self.random_state)
+        w = np.random.randn(X.shape[1], 1) # n feature weights
+        b = 0
+
+        m = len(X)
+        t = y * 2 - 1  # -1 if t==0, +1 if t==1
+        X_t = X * t
+        self.Js=[]
+
+        # Training
+        for epoch in range(self.n_epochs):
+            support_vectors_idx = (X_t.dot(w) + t * b < 1).ravel()
+            X_t_sv = X_t[support_vectors_idx]
+            t_sv = t[support_vectors_idx]
+
+            J = 1/2 * np.sum(w * w) + self.C * (np.sum(1 - X_t_sv.dot(w)) - b * np.sum(t_sv))
+            self.Js.append(J)
+
+            w_gradient_vector = w - self.C * np.sum(X_t_sv, axis=0).reshape(-1, 1)
+            b_derivative = -self.C * np.sum(t_sv)
+                
+            w = w - self.eta(epoch) * w_gradient_vector
+            b = b - self.eta(epoch) * b_derivative
+            
+
+        self.intercept_ = np.array([b])
+        self.coef_ = np.array([w])
+        support_vectors_idx = (X_t.dot(w) + t * b < 1).ravel()
+        self.support_vectors_ = X[support_vectors_idx]
+        return self
+
+    def decision_function(self, X):
+        return X.dot(self.coef_[0]) + self.intercept_[0]
+
+    def predict(self, X):
+        return (self.decision_function(X) >= 0).astype(np.float64)
+
+
+
 if __name__ == '__main__':
     # dec_boundaries()
     # soft_margin()
     # nonlinear_classification()
-    regression()
+    # regression()
+    # under_the_hood()
+    extra_material()
