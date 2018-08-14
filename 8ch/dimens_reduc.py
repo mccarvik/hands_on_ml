@@ -17,7 +17,6 @@ from sklearn.datasets  import make_swiss_roll, fetch_mldata
 from sklearn.metrics import mean_squared_error
 from sklearn.manifold import LocallyLinearEmbedding
 from six.moves import urllib
-    
 
 
 PNG_PATH = '/home/ubuntu/workspace/hands_on_ml/png/8ch/'
