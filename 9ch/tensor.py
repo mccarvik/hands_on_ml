@@ -14,6 +14,19 @@ from sklearn.preprocessing import StandardScaler
 PNG_PATH = '/home/ubuntu/workspace/hands_on_ml/png/9ch/'
 
 
+def feeding_data_to_algo():
+    reset_graph()
+
+    # Placeholder nodes - usually just used to pass data
+    A = tf.placeholder(tf.float32, shape=(None, 3))
+    B = A + 5
+    with tf.Session() as sess:
+        B_val_1 = B.eval(feed_dict={A: [[1, 2, 3]]})
+        B_val_2 = B.eval(feed_dict={A: [[4, 5, 6], [7, 8, 9]]})
+    print(B_val_1)
+    print(B_val_2)
+
+
 def using_optimizers():
     scaler = StandardScaler()
     housing = fetch_california_housing()
@@ -25,8 +38,10 @@ def using_optimizers():
     n_epochs = 1000
     learning_rate = 0.01
     
+    # raw data constants
     X = tf.constant(scaled_housing_data_plus_bias, dtype=tf.float32, name="X")
     y = tf.constant(housing.target.reshape(-1, 1), dtype=tf.float32, name="y")
+    # variables to calc
     theta = tf.Variable(tf.random_uniform([n + 1, 1], -1.0, 1.0, seed=42), name="theta")
     y_pred = tf.matmul(X, theta, name="predictions")
     error = y_pred - y
@@ -50,6 +65,7 @@ def using_optimizers():
 
     reset_graph()
     
+    # Same as above just different optimizer
     n_epochs = 1000
     learning_rate = 0.01
     
@@ -84,12 +100,13 @@ def using_auto_diff():
     scaled_housing_data_plus_bias = np.c_[np.ones((m, 1)), scaled_housing_data]
     
     reset_graph()
-    pdb.set_trace()
     n_epochs = 1000
     learning_rate = 0.01
     
+    # raw data as constants
     X = tf.constant(scaled_housing_data_plus_bias, dtype=tf.float32, name="X")
     y = tf.constant(housing.target.reshape(-1, 1), dtype=tf.float32, name="y")
+    # variables to be calc'd using tf methods
     theta = tf.Variable(tf.random_uniform([n + 1, 1], -1.0, 1.0, seed=42), name="theta")
     y_pred = tf.matmul(X, theta, name="predictions")
     error = y_pred - y
@@ -114,7 +131,6 @@ def using_auto_diff():
     print(best_theta)
     
     # Run the gradient calc on complicated function
-    pdb.set_trace()
     print(my_func(0.2, 0.3))
     reset_graph()
 
@@ -294,4 +310,7 @@ if __name__ == '__main__':
     # managing_graphs()
     # lin_reg()
     # grad_desc()
-    using_auto_diff()
+    # using_auto_diff()
+    # using_optimizers()
+    feeding_data_to_algo()
+    
