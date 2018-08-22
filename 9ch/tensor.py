@@ -14,8 +14,74 @@ from sklearn.preprocessing import StandardScaler
 PNG_PATH = '/home/ubuntu/workspace/hands_on_ml/png/9ch/'
 
 
+def saving_restoring_model():
+    reset_graph()
+    scaler = StandardScaler()
+    housing = fetch_california_housing()
+    m, n = housing.data.shape
+    scaled_housing_data = scaler.fit_transform(housing.data)
+    scaled_housing_data_plus_bias = np.c_[np.ones((m, 1)), scaled_housing_data]
+
+    n_epochs = 1000                                                                     # not shown in the book
+    learning_rate = 0.01                                                                  # not shown
+
+    X = tf.constant(scaled_housing_data_plus_bias, dtype=tf.float32, name="X")            # not shown
+    y = tf.constant(housing.target.reshape(-1, 1), dtype=tf.float32, name="y")            # not shown
+    theta = tf.Variable(tf.random_uniform([n + 1, 1], -1.0, 1.0, seed=42), name="theta")
+    y_pred = tf.matmul(X, theta, name="predictions")                                      # not shown
+    error = y_pred - y                                                                    # not shown
+    mse = tf.reduce_mean(tf.square(error), name="mse")                                    # not shown
+    optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)            # not shown
+    training_op = optimizer.minimize(mse)                                                 # not shown
+
+    init = tf.global_variables_initializer()
+    # create a Saver node
+    saver = tf.train.Saver()
+
+    with tf.Session() as sess:
+        sess.run(init)
+
+        for epoch in range(n_epochs):
+            if epoch % 100 == 0:
+                print("Epoch", epoch, "MSE =", mse.eval())
+                # call the sav method during execution
+                save_path = saver.save(sess, "./my_model.ckpt")
+            sess.run(training_op)
+    
+        best_theta = theta.eval()
+        save_path = saver.save(sess, "./my_model_final.ckpt")
+        print(best_theta)
+    
+    with tf.Session() as sess:
+        # Call restore to get model back from saved file
+        saver.restore(sess, "./my_model_final.ckpt")
+        best_theta_restored = theta.eval() # not shown in the book
+    
+    print(np.allclose(best_theta, best_theta_restored))
+
+    # specify which variables get saved
+    saver = tf.train.Saver({"weights": theta})
+
+    reset_graph()
+    # notice that we start with an empty graph.
+
+    # by default structure of graph gets saved, can load structure like this
+    saver = tf.train.import_meta_graph("./my_model_final.ckpt.meta")  # this loads the graph structure
+    theta = tf.get_default_graph().get_tensor_by_name("theta:0") # not shown in the book
+
+    with tf.Session() as sess:
+        saver.restore(sess, "./my_model_final.ckpt")  # this restores the graph's state
+        best_theta_restored = theta.eval() # not shown in the book
+    print(np.allclose(best_theta, best_theta_restored))
+
+
 def feeding_data_to_algo():
     reset_graph()
+    scaler = StandardScaler()
+    housing = fetch_california_housing()
+    m, n = housing.data.shape
+    scaled_housing_data = scaler.fit_transform(housing.data)
+    scaled_housing_data_plus_bias = np.c_[np.ones((m, 1)), scaled_housing_data]
 
     # Placeholder nodes - usually just used to pass data
     A = tf.placeholder(tf.float32, shape=(None, 3))
@@ -25,6 +91,45 @@ def feeding_data_to_algo():
         B_val_2 = B.eval(feed_dict={A: [[4, 5, 6], [7, 8, 9]]})
     print(B_val_1)
     print(B_val_2)
+    
+    # adjusting gradient descent with placeholders
+    n_epochs = 1000
+    learning_rate = 0.01
+    reset_graph()
+    
+    def fetch_batch(epoch, batch_index, batch_size):
+        np.random.seed(epoch * n_batches + batch_index)  # not shown in the book
+        indices = np.random.randint(m, size=batch_size)  # not shown
+        X_batch = scaled_housing_data_plus_bias[indices] # not shown
+        y_batch = housing.target.reshape(-1, 1)[indices] # not shown
+        return X_batch, y_batch
+
+    X = tf.placeholder(tf.float32, shape=(None, n + 1), name="X")
+    y = tf.placeholder(tf.float32, shape=(None, 1), name="y")
+
+    theta = tf.Variable(tf.random_uniform([n + 1, 1], -1.0, 1.0, seed=42), name="theta")
+    y_pred = tf.matmul(X, theta, name="predictions")
+    error = y_pred - y
+    mse = tf.reduce_mean(tf.square(error), name="mse")
+    optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
+    training_op = optimizer.minimize(mse)
+
+    init = tf.global_variables_initializer()
+    n_epochs = 10
+    batch_size = 100
+    n_batches = int(np.ceil(m / batch_size))
+
+    with tf.Session() as sess:
+        sess.run(init)
+    
+        for epoch in range(n_epochs):
+            for batch_index in range(n_batches):
+                # grab each batch
+                X_batch, y_batch = fetch_batch(epoch, batch_index, batch_size)
+                sess.run(training_op, feed_dict={X: X_batch, y: y_batch})
+    
+        best_theta = theta.eval()
+        print(best_theta)
 
 
 def using_optimizers():
@@ -312,5 +417,6 @@ if __name__ == '__main__':
     # grad_desc()
     # using_auto_diff()
     # using_optimizers()
-    feeding_data_to_algo()
+    # feeding_data_to_algo()
+    saving_restoring_model()
     
