@@ -5,13 +5,344 @@ import pandas as pd
 import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pyplot as plt
+from datetime import datetime
 
 import tensorflow as tf
+# from tensorflow_graph_in_jupyter import show_graph
 from sklearn.datasets import fetch_california_housing
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
 
+
 PNG_PATH = '/home/ubuntu/workspace/hands_on_ml/png/9ch/'
+
+
+def sharing_variables():
+    reset_graph()
+    n_features = 3
+    scaler = StandardScaler()
+    housing = fetch_california_housing()
+    m, n = housing.data.shape
+    scaled_housing_data = scaler.fit_transform(housing.data)
+    scaled_housing_data_plus_bias = np.c_[np.ones((m, 1)), scaled_housing_data]
+    
+    def fetch_batch(epoch, batch_index, batch_size):
+        np.random.seed(epoch * n_batches + batch_index)  # not shown in the book
+        indices = np.random.randint(m, size=batch_size)  # not shown
+        X_batch = scaled_housing_data_plus_bias[indices] # not shown
+        y_batch = housing.target.reshape(-1, 1)[indices] # not shown
+        return X_batch, y_batch
+        
+    reset_graph()
+    # shared variable threshold but have to pass in variables one by one this way
+    def relu1(X, threshold):
+        with tf.name_scope("relu1"):
+            w_shape = (int(X.get_shape()[1]), 1)                        # not shown in the book
+            w = tf.Variable(tf.random_normal(w_shape), name="weights")  # not shown
+            b = tf.Variable(0.0, name="bias")                           # not shown
+            z = tf.add(tf.matmul(X, w), b, name="z")                    # not shown
+            return tf.maximum(z, threshold, name="max")
+    
+    threshold = tf.Variable(0.0, name="threshold")
+    X = tf.placeholder(tf.float32, shape=(None, n_features), name="X")
+    relus = [relu1(X, threshold) for i in range(5)]
+    output = tf.add_n(relus, name="output")
+
+    reset_graph()
+    # Set the shared variable as an attribute of the relu function on the first call
+    def relu2(X):
+        with tf.name_scope("relu2"):
+            if not hasattr(relu2, "threshold"):
+                relu2.threshold = tf.Variable(0.0, name="threshold")
+            w_shape = int(X.get_shape()[1]), 1                          # not shown in the book
+            w = tf.Variable(tf.random_normal(w_shape), name="weights")  # not shown
+            b = tf.Variable(0.0, name="bias")                           # not shown
+            z = tf.add(tf.matmul(X, w), b, name="z")                    # not shown
+            return tf.maximum(z, relu2.threshold, name="max")
+    
+    X = tf.placeholder(tf.float32, shape=(None, n_features), name="X")
+    relus = [relu2(X) for i in range(5)]
+    output = tf.add_n(relus, name="output")
+
+    reset_graph()
+    # create variable if it does not already exist thru 'get_variable' function
+    with tf.variable_scope("relu3"):
+        threshold = tf.get_variable("threshold", shape=(), initializer=tf.constant_initializer(0.0))
+
+    with tf.variable_scope("relu3", reuse=True):
+        threshold = tf.get_variable("threshold")
+
+    with tf.variable_scope("relu3") as scope:
+        scope.reuse_variables()
+        threshold = tf.get_variable("threshold")
+
+    reset_graph()
+    # for this threshold has to be defined outside the relu function
+    def relu3(X):
+        with tf.variable_scope("relu3", reuse=True):
+            threshold = tf.get_variable("threshold")
+            w_shape = int(X.get_shape()[1]), 1                          # not shown
+            w = tf.Variable(tf.random_normal(w_shape), name="weights")  # not shown
+            b = tf.Variable(0.0, name="bias")                           # not shown
+            z = tf.add(tf.matmul(X, w), b, name="z")                    # not shown
+            return tf.maximum(z, threshold, name="max")
+    
+    X = tf.placeholder(tf.float32, shape=(None, n_features), name="X")
+    with tf.variable_scope("relu3"):
+        threshold = tf.get_variable("threshold", shape=(),
+                                    initializer=tf.constant_initializer(0.0))
+    relus = [relu3(X) for relu_index in range(5)]
+    output = tf.add_n(relus, name="output")
+
+    file_writer = tf.summary.FileWriter("logs/relu6", tf.get_default_graph())
+    file_writer.close()
+
+    reset_graph()
+    # here threshold is defined inside the relu function
+    def relu4(X):
+        with tf.variable_scope("relu4"):
+            threshold = tf.get_variable("threshold", shape=(), initializer=tf.constant_initializer(0.0))
+            w_shape = (int(X.get_shape()[1]), 1)
+            w = tf.Variable(tf.random_normal(w_shape), name="weights")
+            b = tf.Variable(0.0, name="bias")
+            z = tf.add(tf.matmul(X, w), b, name="z")
+            return tf.maximum(z, threshold, name="max")
+    
+    X = tf.placeholder(tf.float32, shape=(None, n_features), name="X")
+    with tf.variable_scope("", default_name="") as scope:
+        first_relu = relu4(X)     # create the shared variable
+        scope.reuse_variables()  # then reuse it
+        relus = [first_relu] + [relu4(X) for i in range(4)]
+    output = tf.add_n(relus, name="output")
+    
+    file_writer = tf.summary.FileWriter("logs/relu8", tf.get_default_graph())
+    file_writer.close()
+
+    reset_graph()
+    def relu5(X):
+        threshold = tf.get_variable("threshold", shape=(), initializer=tf.constant_initializer(0.0))
+        w_shape = (int(X.get_shape()[1]), 1)                        # not shown in the book
+        w = tf.Variable(tf.random_normal(w_shape), name="weights")  # not shown
+        b = tf.Variable(0.0, name="bias")                           # not shown
+        z = tf.add(tf.matmul(X, w), b, name="z")                    # not shown
+        return tf.maximum(z, threshold, name="max")
+    
+    X = tf.placeholder(tf.float32, shape=(None, n_features), name="X")
+    relus = []
+    # creates the relus dynamically
+    for relu_index in range(5):
+        with tf.variable_scope("relu5", reuse=(relu_index >= 1)) as scope:
+            relus.append(relu5(X))
+    output = tf.add_n(relus, name="output")
+
+    file_writer = tf.summary.FileWriter("logs/relu9", tf.get_default_graph())
+    file_writer.close()
+
+
+def name_scopes():
+    # Can display metrics in Jupyter 
+    reset_graph()
+    scaler = StandardScaler()
+    housing = fetch_california_housing()
+    m, n = housing.data.shape
+    scaled_housing_data = scaler.fit_transform(housing.data)
+    scaled_housing_data_plus_bias = np.c_[np.ones((m, 1)), scaled_housing_data]
+    
+    def fetch_batch(epoch, batch_index, batch_size):
+        np.random.seed(epoch * n_batches + batch_index)  # not shown in the book
+        indices = np.random.randint(m, size=batch_size)  # not shown
+        X_batch = scaled_housing_data_plus_bias[indices] # not shown
+        y_batch = housing.target.reshape(-1, 1)[indices] # not shown
+        return X_batch, y_batch
+
+    now = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    root_logdir = "tf_logs"
+    logdir = "{}/run-{}/".format(root_logdir, now)
+
+    n_epochs = 1000
+    learning_rate = 0.01
+
+    X = tf.placeholder(tf.float32, shape=(None, n + 1), name="X")
+    y = tf.placeholder(tf.float32, shape=(None, 1), name="y")
+    theta = tf.Variable(tf.random_uniform([n + 1, 1], -1.0, 1.0, seed=42), name="theta")
+    y_pred = tf.matmul(X, theta, name="predictions")
+    
+    # define error and mse within name scope 'loss'
+    with tf.name_scope("loss") as scope:
+        error = y_pred - y
+        mse = tf.reduce_mean(tf.square(error), name="mse")
+    
+    optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
+    training_op = optimizer.minimize(mse)
+
+    init = tf.global_variables_initializer()
+
+    mse_summary = tf.summary.scalar('MSE', mse)
+    file_writer = tf.summary.FileWriter(logdir, tf.get_default_graph())
+    
+    n_epochs = 10
+    batch_size = 100
+    n_batches = int(np.ceil(m / batch_size))
+
+    with tf.Session() as sess:
+        sess.run(init)
+        for epoch in range(n_epochs):
+            for batch_index in range(n_batches):
+                X_batch, y_batch = fetch_batch(epoch, batch_index, batch_size)
+                if batch_index % 10 == 0:
+                    summary_str = mse_summary.eval(feed_dict={X: X_batch, y: y_batch})
+                    step = epoch * n_batches + batch_index
+                    file_writer.add_summary(summary_str, step)
+                sess.run(training_op, feed_dict={X: X_batch, y: y_batch})
+        best_theta = theta.eval()
+
+    file_writer.flush()
+    file_writer.close()
+    print("Best theta:")
+    print(best_theta)
+    # printing out name scopes
+    print(error.op.name)
+    print(mse.op.name)
+    
+    reset_graph()
+    a1 = tf.Variable(0, name="a")      # name == "a"
+    a2 = tf.Variable(0, name="a")      # name == "a_1"
+    
+    with tf.name_scope("param"):       # name == "param"
+        a3 = tf.Variable(0, name="a")  # name == "param/a"
+    
+    with tf.name_scope("param"):       # name == "param_1"
+        a4 = tf.Variable(0, name="a")  # name == "param_1/a"
+    
+    for node in (a1, a2, a3, a4):
+        print(node.op.name)
+    
+    
+def modularity():
+    # Can display metrics in Jupyter 
+    reset_graph()
+    
+    scaler = StandardScaler()
+    housing = fetch_california_housing()
+    m, n = housing.data.shape
+    scaled_housing_data = scaler.fit_transform(housing.data)
+    scaled_housing_data_plus_bias = np.c_[np.ones((m, 1)), scaled_housing_data]
+    
+    def fetch_batch(epoch, batch_index, batch_size):
+        np.random.seed(epoch * n_batches + batch_index)  # not shown in the book
+        indices = np.random.randint(m, size=batch_size)  # not shown
+        X_batch = scaled_housing_data_plus_bias[indices] # not shown
+        y_batch = housing.target.reshape(-1, 1)[indices] # not shown
+        return X_batch, y_batch
+    
+    
+    # UGLY CODE that tensorflow replaces
+    n_features = 3
+    X = tf.placeholder(tf.float32, shape=(None, n_features), name="X")
+    
+    w1 = tf.Variable(tf.random_normal((n_features, 1)), name="weights1")
+    w2 = tf.Variable(tf.random_normal((n_features, 1)), name="weights2")
+    b1 = tf.Variable(0.0, name="bias1")
+    b2 = tf.Variable(0.0, name="bias2")
+    
+    z1 = tf.add(tf.matmul(X, w1), b1, name="z1")
+    z2 = tf.add(tf.matmul(X, w2), b2, name="z2")
+    
+    relu1 = tf.maximum(z1, 0., name="relu1")
+    relu2 = tf.maximum(z1, 0., name="relu2")  # Oops, cut&paste error! Did you spot it?
+    
+    output = tf.add(relu1, relu2, name="output")
+    reset_graph()
+
+    # function that will compute the sum of a list of tensors
+    def relu(X):
+        w_shape = (int(X.get_shape()[1]), 1)
+        w = tf.Variable(tf.random_normal(w_shape), name="weights")
+        b = tf.Variable(0.0, name="bias")
+        z = tf.add(tf.matmul(X, w), b, name="z")
+        return tf.maximum(z, 0., name="relu")
+
+    n_features = 3
+    X = tf.placeholder(tf.float32, shape=(None, n_features), name="X")
+    relus = [relu(X) for i in range(5)]
+    output = tf.add_n(relus, name="output")
+    file_writer = tf.summary.FileWriter("logs/relu1", tf.get_default_graph())
+
+    reset_graph()
+    
+    # Even better implementation using name scopes
+    def relu2(X):
+        with tf.name_scope("relu2"):
+            w_shape = (int(X.get_shape()[1]), 1)                          # not shown in the book
+            w = tf.Variable(tf.random_normal(w_shape), name="weights")    # not shown
+            b = tf.Variable(0.0, name="bias")                             # not shown
+            z = tf.add(tf.matmul(X, w), b, name="z")                      # not shown
+            return tf.maximum(z, 0., name="max")                          # not shown
+
+    n_features = 3
+    X = tf.placeholder(tf.float32, shape=(None, n_features), name="X")
+    relus = [relu2(X) for i in range(5)]
+    output = tf.add_n(relus, name="output")
+
+    file_writer = tf.summary.FileWriter("logs/relu2", tf.get_default_graph())
+    file_writer.close()
+
+
+def using_tensorboard():
+    # Can display metrics in Jupyter 
+    # show_graph(tf.get_default_graph())
+    reset_graph()
+    scaler = StandardScaler()
+    housing = fetch_california_housing()
+    m, n = housing.data.shape
+    scaled_housing_data = scaler.fit_transform(housing.data)
+    scaled_housing_data_plus_bias = np.c_[np.ones((m, 1)), scaled_housing_data]
+    
+    def fetch_batch(epoch, batch_index, batch_size):
+        np.random.seed(epoch * n_batches + batch_index)  # not shown in the book
+        indices = np.random.randint(m, size=batch_size)  # not shown
+        X_batch = scaled_housing_data_plus_bias[indices] # not shown
+        y_batch = housing.target.reshape(-1, 1)[indices] # not shown
+        return X_batch, y_batch
+
+    now = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    root_logdir = "tf_logs"
+    logdir = "{}/run-{}/".format(root_logdir, now)
+    n_epochs = 1000
+    learning_rate = 0.01
+
+    X = tf.placeholder(tf.float32, shape=(None, n + 1), name="X")
+    y = tf.placeholder(tf.float32, shape=(None, 1), name="y")
+    theta = tf.Variable(tf.random_uniform([n + 1, 1], -1.0, 1.0, seed=42), name="theta")
+    y_pred = tf.matmul(X, theta, name="predictions")
+    error = y_pred - y
+    mse = tf.reduce_mean(tf.square(error), name="mse")
+    optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
+    training_op = optimizer.minimize(mse)
+
+    init = tf.global_variables_initializer()
+    mse_summary = tf.summary.scalar('MSE', mse)
+    file_writer = tf.summary.FileWriter(logdir, tf.get_default_graph())
+
+    n_epochs = 10
+    batch_size = 100
+    n_batches = int(np.ceil(m / batch_size))
+    
+    with tf.Session() as sess:                                                        # not shown in the book
+        sess.run(init)                                                                # not shown
+    
+        for epoch in range(n_epochs):                                                 # not shown
+            for batch_index in range(n_batches):
+                X_batch, y_batch = fetch_batch(epoch, batch_index, batch_size)
+                if batch_index % 10 == 0:
+                    summary_str = mse_summary.eval(feed_dict={X: X_batch, y: y_batch})
+                    step = epoch * n_batches + batch_index
+                    file_writer.add_summary(summary_str, step)
+                sess.run(training_op, feed_dict={X: X_batch, y: y_batch})
+    
+        best_theta = theta.eval()                                                     # not shown
+    file_writer.close()
+    print(best_theta)
 
 
 def saving_restoring_model():
@@ -418,5 +749,8 @@ if __name__ == '__main__':
     # using_auto_diff()
     # using_optimizers()
     # feeding_data_to_algo()
-    saving_restoring_model()
-    
+    # saving_restoring_model()
+    # using_tensorboard()
+    # name_scopes()
+    # modularity()
+    sharing_variables()
