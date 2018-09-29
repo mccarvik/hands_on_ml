@@ -125,9 +125,7 @@ def fnn_for_mnist():
     dnn_clf = tf.estimator.DNNClassifier(hidden_units=[300,100], n_classes=10, feature_columns=feature_cols)
 
     input_fn = tf.estimator.inputs.numpy_input_fn(x={"X": X_train}, y=y_train, num_epochs=40, batch_size=50, shuffle=True)
-    pdb.set_trace()
     dnn_clf.train(input_fn=input_fn)
-    pdb.set_trace()
     
     test_input_fn = tf.estimator.inputs.numpy_input_fn(x={"X": X_test}, y=y_test, shuffle=False)
     eval_results = dnn_clf.evaluate(input_fn=test_input_fn)
