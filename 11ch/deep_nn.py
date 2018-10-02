@@ -7,11 +7,187 @@ mpl.use('Agg')
 import matplotlib.pyplot as plt
 from datetime import datetime
 from functools import partial
-
-
 import tensorflow as tf
 
 PNG_PATH = '/home/ubuntu/workspace/hands_on_ml/png/11ch/'
+
+
+def max_norm():
+    reset_graph()
+    n_inputs = 28 * 28
+    n_hidden1 = 300
+    n_hidden2 = 50
+    n_outputs = 10
+    learning_rate = 0.01
+    momentum = 0.9
+    
+    X = tf.placeholder(tf.float32, shape=(None, n_inputs), name="X")
+    y = tf.placeholder(tf.int32, shape=(None), name="y")
+    # create max_norm regularizer function to pass to tenserflow
+    max_norm_reg = max_norm_regularizer(threshold=1.0)
+    
+    with tf.name_scope("dnn"):
+        hidden1 = tf.layers.dense(X, n_hidden1, activation=tf.nn.relu, kernel_regularizer=max_norm_reg, name="hidden1")
+        hidden2 = tf.layers.dense(hidden1, n_hidden2, activation=tf.nn.relu, kernel_regularizer=max_norm_reg, name="hidden2")
+        logits = tf.layers.dense(hidden2, n_outputs, name="outputs")
+
+    with tf.name_scope("loss"):
+        xentropy = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=y, logits=logits)
+        loss = tf.reduce_mean(xentropy, name="loss")
+    
+    with tf.name_scope("train"):
+        optimizer = tf.train.MomentumOptimizer(learning_rate, momentum)
+        training_op = optimizer.minimize(loss)    
+    
+    with tf.name_scope("eval"):
+        correct = tf.nn.in_top_k(logits, y, 1)
+        accuracy = tf.reduce_mean(tf.cast(correct, tf.float32))
+    
+    init = tf.global_variables_initializer()
+    saver = tf.train.Saver()
+    
+    (X_train, y_train), (X_test, y_test) = tf.keras.datasets.mnist.load_data()
+    X_train = X_train.astype(np.float32).reshape(-1, 28*28) / 255.0
+    X_test = X_test.astype(np.float32).reshape(-1, 28*28) / 255.0
+    y_train = y_train.astype(np.int32)
+    y_test = y_test.astype(np.int32)
+    X_valid, X_train = X_train[:50], X_train[50:]
+    y_valid, y_train = y_train[:50], y_train[50:]
+    
+    n_epochs = 11
+    batch_size = 50
+    clip_all_weights = tf.get_collection("max_norm")
+    with tf.Session() as sess:
+        init.run()
+        for epoch in range(n_epochs):
+            for X_batch, y_batch in shuffle_batch(X_train, y_train, batch_size):
+                sess.run(training_op, feed_dict={X: X_batch, y: y_batch})
+                sess.run(clip_all_weights)
+            acc_valid = accuracy.eval(feed_dict={X: X_valid, y: y_valid}) # not shown
+            print(epoch, "Validation accuracy:", acc_valid)               # not shown
+        save_path = saver.save(sess, "./my_model_final.ckpt")    
+
+
+def dropout():
+    # randomly turns off nodes so to prevent overfitting
+    # kind of creates a pseudo neural network forest as different nodes are turned off each run
+    reset_graph()
+    n_inputs = 28 * 28  # MNIST
+    n_hidden1 = 300
+    n_hidden2 = 50
+    n_outputs = 10
+    X = tf.placeholder(tf.float32, shape=(None, n_inputs), name="X")
+    y = tf.placeholder(tf.int32, shape=(None), name="y")
+    training = tf.placeholder_with_default(False, shape=(), name='training')
+    dropout_rate = 0.5  # == 1 - keep_prob
+    X_drop = tf.layers.dropout(X, dropout_rate, training=training)
+
+    with tf.name_scope("dnn"):
+        hidden1 = tf.layers.dense(X_drop, n_hidden1, activation=tf.nn.relu, name="hidden1")
+        hidden1_drop = tf.layers.dropout(hidden1, dropout_rate, training=training)
+        hidden2 = tf.layers.dense(hidden1_drop, n_hidden2, activation=tf.nn.relu, name="hidden2")
+        hidden2_drop = tf.layers.dropout(hidden2, dropout_rate, training=training)
+        logits = tf.layers.dense(hidden2_drop, n_outputs, name="outputs")
+
+    with tf.name_scope("loss"):
+        xentropy = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=y, logits=logits)
+        loss = tf.reduce_mean(xentropy, name="loss")
+    
+    learning_rate = 0.01
+    with tf.name_scope("train"):
+        optimizer = tf.train.MomentumOptimizer(learning_rate, momentum=0.9)
+        training_op = optimizer.minimize(loss)    
+    
+    with tf.name_scope("eval"):
+        correct = tf.nn.in_top_k(logits, y, 1)
+        accuracy = tf.reduce_mean(tf.cast(correct, tf.float32))
+    
+    init = tf.global_variables_initializer()
+    saver = tf.train.Saver()
+    
+    (X_train, y_train), (X_test, y_test) = tf.keras.datasets.mnist.load_data()
+    X_train = X_train.astype(np.float32).reshape(-1, 28*28) / 255.0
+    X_test = X_test.astype(np.float32).reshape(-1, 28*28) / 255.0
+    y_train = y_train.astype(np.int32)
+    y_test = y_test.astype(np.int32)
+    X_valid, X_train = X_train[:50], X_train[50:]
+    y_valid, y_train = y_train[:50], y_train[50:]
+    
+    n_epochs = 11
+    batch_size = 50
+    with tf.Session() as sess:
+        init.run()
+        for epoch in range(n_epochs):
+            for X_batch, y_batch in shuffle_batch(X_train, y_train, batch_size):
+                sess.run(training_op, feed_dict={X: X_batch, y: y_batch, training: True})
+            accuracy_val = accuracy.eval(feed_dict={X: X_valid, y: y_valid})
+            print(epoch, "Validation accuracy:", accuracy_val)
+        save_path = saver.save(sess, "./my_model_final.ckpt")
+
+
+def l1_l2_regulatization():
+    reset_graph()
+
+    n_inputs = 28 * 28  # MNIST
+    n_hidden1 = 300
+    n_hidden2 = 50
+    n_outputs = 10
+    X = tf.placeholder(tf.float32, shape=(None, n_inputs), name="X")
+    y = tf.placeholder(tf.int32, shape=(None), name="y")
+    
+    scale = 0.001 # l1 regularization hyperparameter
+    my_dense_layer = partial(tf.layers.dense, activation=tf.nn.relu, kernel_regularizer=tf.contrib.layers.l1_regularizer(scale))
+    with tf.name_scope("dnn"):
+        hidden1 = my_dense_layer(X, n_hidden1, name="hidden1")
+        hidden2 = my_dense_layer(hidden1, n_hidden2, name="hidden2")
+        logits = my_dense_layer(hidden2, n_outputs, activation=None, name="outputs")
+    
+    # with tf.name_scope("dnn"):
+    #     hidden1 = tf.layers.dense(X, n_hidden1, activation=tf.nn.relu, name="hidden1")
+    #     logits = tf.layers.dense(hidden1, n_outputs, name="outputs")
+
+    W1 = tf.get_default_graph().get_tensor_by_name("hidden1/kernel:0")
+    W2 = tf.get_default_graph().get_tensor_by_name("outputs/kernel:0")
+    
+    with tf.name_scope("loss"):
+        xentropy = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=y, logits=logits)
+        base_loss = tf.reduce_mean(xentropy, name="avg_xentropy")
+        # If not passing regularization function:
+        # reg_losses = tf.reduce_sum(tf.abs(W1)) + tf.reduce_sum(tf.abs(W2))
+        reg_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
+        loss = tf.add_n([base_loss] + reg_losses, name="loss")
+        
+
+    with tf.name_scope("eval"):
+        correct = tf.nn.in_top_k(logits, y, 1)
+        accuracy = tf.reduce_mean(tf.cast(correct, tf.float32), name="accuracy")
+    
+    learning_rate = 0.01
+    with tf.name_scope("train"):
+        optimizer = tf.train.GradientDescentOptimizer(learning_rate)
+        training_op = optimizer.minimize(loss)
+    
+    init = tf.global_variables_initializer()
+    saver = tf.train.Saver()
+
+    (X_train, y_train), (X_test, y_test) = tf.keras.datasets.mnist.load_data()
+    X_train = X_train.astype(np.float32).reshape(-1, 28*28) / 255.0
+    X_test = X_test.astype(np.float32).reshape(-1, 28*28) / 255.0
+    y_train = y_train.astype(np.int32)
+    y_test = y_test.astype(np.int32)
+    X_valid, X_train = X_train[:50], X_train[50:]
+    y_valid, y_train = y_train[:50], y_train[50:]
+
+    n_epochs = 11
+    batch_size = 200
+    with tf.Session() as sess:
+        init.run()
+        for epoch in range(n_epochs):
+            for X_batch, y_batch in shuffle_batch(X_train, y_train, batch_size):
+                sess.run(training_op, feed_dict={X: X_batch, y: y_batch})
+            accuracy_val = accuracy.eval(feed_dict={X: X_valid, y: y_valid})
+            print(epoch, "Validation accuracy:", accuracy_val)
+        save_path = saver.save(sess, "./my_model_final.ckpt")
 
 
 def learning_rate_scheduling():
@@ -632,6 +808,14 @@ def selu(z, scale=1.0507009873554804934193349852946, alpha=1.6732632423543772848
 def selu_new(z, scale=1.0507009873554804934193349852946, alpha=1.6732632423543772848170429916717):
     return scale * tf.where(z >= 0.0, z, alpha * tf.nn.elu(z))
 
+def max_norm_regularizer(threshold, axes=1, name="max_norm", collection="max_norm"):
+    def max_norm(weights):
+        clipped = tf.clip_by_norm(weights, clip_norm=threshold, axes=axes)
+        clip_weights = tf.assign(weights, clipped, name=name)
+        tf.add_to_collection(collection, clip_weights)
+        return None # there is no regularization loss term
+    return max_norm
+
 
 if __name__ == '__main__':
     # saturation()
@@ -648,5 +832,8 @@ if __name__ == '__main__':
     # freeze_lower_layers()
     # cached_frozen_layers()
     # faster_optimizers()
-    learning_rate_scheduling()
+    # learning_rate_scheduling()
+    # l1_l2_regulatization()
+    # dropout()
+    max_norm()
     
