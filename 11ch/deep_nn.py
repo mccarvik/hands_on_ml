@@ -14,6 +14,248 @@ import tensorflow as tf
 PNG_PATH = '/home/ubuntu/workspace/hands_on_ml/png/11ch/'
 
 
+def learning_rate_scheduling():
+    reset_graph()
+    n_inputs = 28 * 28  # MNIST
+    n_hidden1 = 300
+    n_hidden2 = 50
+    n_outputs = 10
+    
+    X = tf.placeholder(tf.float32, shape=(None, n_inputs), name="X")
+    y = tf.placeholder(tf.int32, shape=(None), name="y")
+    
+    with tf.name_scope("dnn"):
+        hidden1 = tf.layers.dense(X, n_hidden1, activation=tf.nn.relu, name="hidden1")
+        hidden2 = tf.layers.dense(hidden1, n_hidden2, activation=tf.nn.relu, name="hidden2")
+        logits = tf.layers.dense(hidden2, n_outputs, name="outputs")
+    
+    with tf.name_scope("loss"):
+        xentropy = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=y, logits=logits)
+        loss = tf.reduce_mean(xentropy, name="loss")
+    
+    with tf.name_scope("eval"):
+        correct = tf.nn.in_top_k(logits, y, 1)
+        accuracy = tf.reduce_mean(tf.cast(correct, tf.float32), name="accuracy")
+
+    with tf.name_scope("train"):       # not shown in the book
+        initial_learning_rate = 0.1
+        decay_steps = 10000
+        decay_rate = 1/10
+        global_step = tf.Variable(0, trainable=False, name="global_step")
+        # learning rate decreases as training progresses
+        learning_rate = tf.train.exponential_decay(initial_learning_rate, global_step, decay_steps, decay_rate)
+        optimizer = tf.train.MomentumOptimizer(learning_rate, momentum=0.9)
+        training_op = optimizer.minimize(loss, global_step=global_step)
+
+    init = tf.global_variables_initializer()
+    saver = tf.train.Saver()
+    
+    (X_train, y_train), (X_test, y_test) = tf.keras.datasets.mnist.load_data()
+    X_train = X_train.astype(np.float32).reshape(-1, 28*28) / 255.0
+    X_test = X_test.astype(np.float32).reshape(-1, 28*28) / 255.0
+    y_train = y_train.astype(np.int32)
+    y_test = y_test.astype(np.int32)
+    X_valid, X_train = X_train[:50], X_train[50:]
+    y_valid, y_train = y_train[:50], y_train[50:]
+    
+    n_epochs = 5
+    batch_size = 50
+    with tf.Session() as sess:
+        init.run()
+        for epoch in range(n_epochs):
+            for X_batch, y_batch in shuffle_batch(X_train, y_train, batch_size):
+                sess.run(training_op, feed_dict={X: X_batch, y: y_batch})
+            accuracy_val = accuracy.eval(feed_dict={X: X_valid, y: y_valid})
+            print(epoch, "Validation accuracy:", accuracy_val)
+        save_path = saver.save(sess, "./my_model_final.ckpt")
+
+
+def faster_optimizers():
+    # momentum optimizer
+    optimizer = tf.train.MomentumOptimizer(learning_rate=learning_rate, momentum=0.9)
+    # Nesterov Accelerated Gradient
+    optimizer = tf.train.MomentumOptimizer(learning_rate=learning_rate,momentum=0.9, use_nesterov=True)
+    # AdaGrad
+    optimizer = tf.train.AdagradOptimizer(learning_rate=learning_rate)
+    # RMSProp
+    optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate, momentum=0.9, decay=0.9, epsilon=1e-10)
+    # Adam Optimization
+    optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
+
+
+def cached_frozen_layers():
+    reset_graph()
+
+    n_inputs = 28 * 28  # MNIST
+    n_hidden1 = 300 # reused
+    n_hidden2 = 50  # reused
+    n_hidden3 = 50  # reused
+    n_hidden4 = 20  # new!
+    n_outputs = 10  # new!
+
+    X = tf.placeholder(tf.float32, shape=(None, n_inputs), name="X")
+    y = tf.placeholder(tf.int32, shape=(None), name="y")
+
+    with tf.name_scope("dnn"):
+        hidden1 = tf.layers.dense(X, n_hidden1, activation=tf.nn.relu, name="hidden1")       # reused
+        hidden2 = tf.layers.dense(hidden1, n_hidden2, activation=tf.nn.relu, name="hidden2") # reused
+        # Can add a stop gradient to freeze the first two layers instead of using the method shown
+        # hidden2_stop = tf.stop_gradient(hidden2)
+        hidden3 = tf.layers.dense(hidden2, n_hidden3, activation=tf.nn.relu, name="hidden3") # reused
+        hidden4 = tf.layers.dense(hidden3, n_hidden4, activation=tf.nn.relu, name="hidden4") # new!
+        logits = tf.layers.dense(hidden4, n_outputs, name="outputs")                         # new!
+
+    with tf.name_scope("loss"):
+        xentropy = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=y, logits=logits)
+        loss = tf.reduce_mean(xentropy, name="loss")
+
+    with tf.name_scope("eval"):
+        correct = tf.nn.in_top_k(logits, y, 1)
+        accuracy = tf.reduce_mean(tf.cast(correct, tf.float32), name="accuracy")
+
+    learning_rate = 0.01
+    with tf.name_scope("train"):   # not shown in the book
+        optimizer = tf.train.GradientDescentOptimizer(learning_rate)     # not shown
+        # only traing the 3rd and 4th layer
+        train_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope="hidden[34]|outputs")
+        training_op = optimizer.minimize(loss, var_list=train_vars)
+
+    init = tf.global_variables_initializer()
+    new_saver = tf.train.Saver()
+
+    reuse_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope="hidden[123]") # regular expression
+    restore_saver = tf.train.Saver(reuse_vars) # to restore layers 1-3
+    
+    init = tf.global_variables_initializer()
+    saver = tf.train.Saver()
+    
+    
+    (X_train, y_train), (X_test, y_test) = tf.keras.datasets.mnist.load_data()
+    X_train = X_train.astype(np.float32).reshape(-1, 28*28) / 255.0
+    X_test = X_test.astype(np.float32).reshape(-1, 28*28) / 255.0
+    y_train = y_train.astype(np.int32)
+    y_test = y_test.astype(np.int32)
+    X_valid, X_train = X_train[:50], X_train[50:]
+    y_valid, y_train = y_train[:50], y_train[50:]
+
+    n_epochs = 11
+    batch_size = 200
+    n_batches = len(X_train) // batch_size
+
+    with tf.Session() as sess:
+        init.run()
+        restore_saver.restore(sess, "./my_model_final.ckpt")
+        
+        h2_cache = sess.run(hidden2, feed_dict={X: X_train})
+        h2_cache_valid = sess.run(hidden2, feed_dict={X: X_valid}) # not shown in the book
+    
+        for epoch in range(n_epochs):
+            shuffled_idx = np.random.permutation(len(X_train))
+            hidden2_batches = np.array_split(h2_cache[shuffled_idx], n_batches)
+            y_batches = np.array_split(y_train[shuffled_idx], n_batches)
+            for hidden2_batch, y_batch in zip(hidden2_batches, y_batches):
+                sess.run(training_op, feed_dict={hidden2:hidden2_batch, y:y_batch})
+            accuracy_val = accuracy.eval(feed_dict={hidden2: h2_cache_valid, # not shown
+                                                    y: y_valid})             # not shown
+            print(epoch, "Validation accuracy:", accuracy_val)               # not shown
+        save_path = saver.save(sess, "./my_new_model_final.ckpt")
+
+
+def freeze_lower_layers():
+    reset_graph()
+
+    n_inputs = 28 * 28  # MNIST
+    n_hidden1 = 300 # reused
+    n_hidden2 = 50  # reused
+    n_hidden3 = 50  # reused
+    n_hidden4 = 20  # new!
+    n_outputs = 10  # new!
+
+    X = tf.placeholder(tf.float32, shape=(None, n_inputs), name="X")
+    y = tf.placeholder(tf.int32, shape=(None), name="y")
+
+    with tf.name_scope("dnn"):
+        hidden1 = tf.layers.dense(X, n_hidden1, activation=tf.nn.relu, name="hidden1")       # reused
+        hidden2 = tf.layers.dense(hidden1, n_hidden2, activation=tf.nn.relu, name="hidden2") # reused
+        # Can add a stop gradient to freeze the first two layers instead of using the method shown
+        # hidden2_stop = tf.stop_gradient(hidden2)
+        hidden3 = tf.layers.dense(hidden2, n_hidden3, activation=tf.nn.relu, name="hidden3") # reused
+        hidden4 = tf.layers.dense(hidden3, n_hidden4, activation=tf.nn.relu, name="hidden4") # new!
+        logits = tf.layers.dense(hidden4, n_outputs, name="outputs")                         # new!
+
+    with tf.name_scope("loss"):
+        xentropy = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=y, logits=logits)
+        loss = tf.reduce_mean(xentropy, name="loss")
+
+    with tf.name_scope("eval"):
+        correct = tf.nn.in_top_k(logits, y, 1)
+        accuracy = tf.reduce_mean(tf.cast(correct, tf.float32), name="accuracy")
+
+    learning_rate = 0.01
+    with tf.name_scope("train"):   # not shown in the book
+        optimizer = tf.train.GradientDescentOptimizer(learning_rate)     # not shown
+        # only traing the 3rd and 4th layer
+        train_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope="hidden[34]|outputs")
+        training_op = optimizer.minimize(loss, var_list=train_vars)
+
+    init = tf.global_variables_initializer()
+    new_saver = tf.train.Saver()
+
+    reuse_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope="hidden[123]") # regular expression
+    restore_saver = tf.train.Saver(reuse_vars) # to restore layers 1-3
+    
+    init = tf.global_variables_initializer()
+    saver = tf.train.Saver()
+    
+    
+    (X_train, y_train), (X_test, y_test) = tf.keras.datasets.mnist.load_data()
+    X_train = X_train.astype(np.float32).reshape(-1, 28*28) / 255.0
+    X_test = X_test.astype(np.float32).reshape(-1, 28*28) / 255.0
+    y_train = y_train.astype(np.int32)
+    y_test = y_test.astype(np.int32)
+    X_valid, X_train = X_train[:50], X_train[50:]
+    y_valid, y_train = y_train[:50], y_train[50:]
+
+    n_epochs = 11
+    batch_size = 200
+    with tf.Session() as sess:
+        init.run()
+        restore_saver.restore(sess, "./my_model_final.ckpt")
+        for epoch in range(n_epochs):
+            for X_batch, y_batch in shuffle_batch(X_train, y_train, batch_size):
+                sess.run(training_op, feed_dict={X: X_batch, y: y_batch})
+            accuracy_val = accuracy.eval(feed_dict={X: X_valid, y: y_valid})
+            print(epoch, "Validation accuracy:", accuracy_val)
+        save_path = saver.save(sess, "./my_new_model_final.ckpt")
+
+
+def reuse_other_framework():
+    reset_graph()
+    n_inputs = 28 * 28  # MNIST
+    n_hidden1 = 300
+
+    original_w = [[1., 2., 3.], [4., 5., 6.]] # Load the weights from the other framework
+    original_b = [7., 8., 9.]                 # Load the biases from the other framework
+    
+    X = tf.placeholder(tf.float32, shape=(None, n_inputs), name="X")
+    hidden1 = tf.layers.dense(X, n_hidden1, activation=tf.nn.relu, name="hidden1")
+    # [...] Build the rest of the model
+    
+    # Get a handle on the assignment nodes for the hidden1 variables
+    graph = tf.get_default_graph()
+    assign_kernel = graph.get_operation_by_name("hidden1/kernel/Assign")
+    assign_bias = graph.get_operation_by_name("hidden1/bias/Assign")
+    init_kernel = assign_kernel.inputs[1]
+    init_bias = assign_bias.inputs[1]
+    
+    init = tf.global_variables_initializer()
+    
+    with tf.Session() as sess:
+        sess.run(init, feed_dict={init_kernel: original_w, init_bias: original_b})
+        # [...] Train the model on your new task
+        print(hidden1.eval(feed_dict={X: [[10.0, 11.0]]}))  # not shown in the book
+    
+
 def reuse_part_of_model():
     reset_graph()
     n_hidden4 = 20  # new layer
@@ -401,4 +643,10 @@ if __name__ == '__main__':
     # batch_normalization()
     # gradient_clipping()
     # reuse_tf_model()
-    reuse_part_of_model()
+    # reuse_part_of_model()
+    # reuse_other_framework()
+    # freeze_lower_layers()
+    # cached_frozen_layers()
+    # faster_optimizers()
+    learning_rate_scheduling()
+    
