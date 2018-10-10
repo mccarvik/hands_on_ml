@@ -9,13 +9,199 @@ from datetime import datetime
 from functools import partial
 import tensorflow as tf
 from tensorflow.examples.tutorials.mnist import input_data
+from sklearn.manifold import TSNE
 
 from six.moves import urllib
 import errno
 import os
 import zipfile
+from collections import Counter, deque
 
 PNG_PATH = '/home/ubuntu/workspace/hands_on_ml/png/14ch/'
+WORDS_PATH = "datasets/words"
+WORDS_URL = 'http://mattmahoney.net/dc/text8.zip'
+
+
+def machine_translation():
+    # Will use ML to translate english to french
+    reset_graph()
+    n_steps = 50
+    n_neurons = 200
+    n_layers = 3
+    num_encoder_symbols = 20000
+    num_decoder_symbols = 20000
+    embedding_size = 150
+    learning_rate = 0.01
+    
+    X = tf.placeholder(tf.int32, [None, n_steps]) # English sentences
+    Y = tf.placeholder(tf.int32, [None, n_steps]) # French translations
+    W = tf.placeholder(tf.float32, [None, n_steps - 1, 1])
+    Y_input = Y[:, :-1]
+    Y_target = Y[:, 1:]
+    
+    encoder_inputs = tf.unstack(tf.transpose(X)) # list of 1D tensors
+    decoder_inputs = tf.unstack(tf.transpose(Y_input)) # list of 1D tensors
+    
+    lstm_cells = [tf.contrib.rnn.BasicLSTMCell(num_units=n_neurons) for layer in range(n_layers)]
+    cell = tf.contrib.rnn.MultiRNNCell(lstm_cells)
+    
+    output_seqs, states = tf.contrib.legacy_seq2seq.embedding_rnn_seq2seq(
+        encoder_inputs,
+        decoder_inputs,
+        cell,
+        num_encoder_symbols,
+        num_decoder_symbols,
+        embedding_size)
+    
+    logits = tf.transpose(tf.unstack(output_seqs), perm=[1, 0, 2])
+    logits_flat = tf.reshape(logits, [-1, num_decoder_symbols])
+    Y_target_flat = tf.reshape(Y_target, [-1])
+    W_flat = tf.reshape(W, [-1])
+    xentropy = W_flat * tf.nn.sparse_softmax_cross_entropy_with_logits(labels=Y_target_flat, logits=logits_flat)
+    loss = tf.reduce_mean(xentropy)
+    optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
+    training_op = optimizer.minimize(loss)
+    init = tf.global_variables_initializer()
+
+
+def embeddings_and_nlp():
+    words = fetch_words_data()
+    print(words[:5])
+    vocabulary_size = 50000
+
+    vocabulary = [("UNK", None)] + Counter(words).most_common(vocabulary_size - 1)
+    vocabulary = np.array([word for word, _ in vocabulary])
+    dictionary = {word: code for code, word in enumerate(vocabulary)}
+    data = np.array([dictionary.get(word, 0) for word in words])
+    print(" ".join(words[:9]), data[:9])
+    print(" ".join([vocabulary[word_index] for word_index in [5241, 3081, 12, 6, 195, 2, 3134, 46, 59]]))
+    print(words[24], data[24])
+    np.random.seed(42)
+    data_index = 0
+    
+    def generate_batch(batch_size, num_skips, skip_window, data_index):
+        assert batch_size % num_skips == 0
+        assert num_skips <= 2 * skip_window
+        batch = np.ndarray(shape=[batch_size], dtype=np.int32)
+        labels = np.ndarray(shape=[batch_size, 1], dtype=np.int32)
+        span = 2 * skip_window + 1 # [ skip_window target skip_window ]
+        buffer = deque(maxlen=span)
+        for _ in range(span):
+            buffer.append(data[data_index])
+            data_index = (data_index + 1) % len(data)
+        for i in range(batch_size // num_skips):
+            target = skip_window  # target label at the center of the buffer
+            targets_to_avoid = [ skip_window ]
+            for j in range(num_skips):
+                while target in targets_to_avoid:
+                    target = np.random.randint(0, span)
+                targets_to_avoid.append(target)
+                batch[i * num_skips + j] = buffer[skip_window]
+                labels[i * num_skips + j, 0] = buffer[target]
+            buffer.append(data[data_index])
+            data_index = (data_index + 1) % len(data)
+        return batch, labels, data_index
+    
+    batch, labels, data_index = generate_batch(8, 2, 1, data_index)
+    print(batch, [vocabulary[word] for word in batch])
+    print(labels, [vocabulary[word] for word in labels[:, 0]])
+    
+    # build the model
+    batch_size = 128
+    embedding_size = 128  # Dimension of the embedding vector.
+    skip_window = 1       # How many words to consider left and right.
+    num_skips = 2         # How many times to reuse an input to generate a label.
+    
+    # We pick a random validation set to sample nearest neighbors. Here we limit the
+    # validation samples to the words that have a low numeric ID, which by
+    # construction are also the most frequent.
+    valid_size = 16     # Random set of words to evaluate similarity on.
+    valid_window = 100  # Only pick dev samples in the head of the distribution.
+    valid_examples = np.random.choice(valid_window, valid_size, replace=False)
+    num_sampled = 64    # Number of negative examples to sample.
+    
+    learning_rate = 0.01
+    reset_graph()
+    
+    # Input data.
+    train_labels = tf.placeholder(tf.int32, shape=[batch_size, 1])
+    valid_dataset = tf.constant(valid_examples, dtype=tf.int32)
+    vocabulary_size = 50000
+    embedding_size = 150
+    
+    # Look up embeddings for inputs.
+    init_embeds = tf.random_uniform([vocabulary_size, embedding_size], -1.0, 1.0)
+    embeddings = tf.Variable(init_embeds)
+    train_inputs = tf.placeholder(tf.int32, shape=[None])
+    embed = tf.nn.embedding_lookup(embeddings, train_inputs)
+    # Construct the variables for the NCE loss
+    nce_weights = tf.Variable(tf.truncated_normal([vocabulary_size, embedding_size], stddev=1.0 / np.sqrt(embedding_size)))
+    nce_biases = tf.Variable(tf.zeros([vocabulary_size]))
+    
+    # Compute the average NCE loss for the batch.
+    # tf.nce_loss automatically draws a new sample of the negative labels each
+    # time we evaluate the loss.
+    loss = tf.reduce_mean(tf.nn.nce_loss(nce_weights, nce_biases, train_labels, embed, num_sampled, vocabulary_size))
+    
+    # Construct the Adam optimizer
+    optimizer = tf.train.AdamOptimizer(learning_rate)
+    training_op = optimizer.minimize(loss)
+    
+    # Compute the cosine similarity between minibatch examples and all embeddings.
+    norm = tf.sqrt(tf.reduce_sum(tf.square(embeddings), axis=1, keepdims=True))
+    normalized_embeddings = embeddings / norm
+    valid_embeddings = tf.nn.embedding_lookup(normalized_embeddings, valid_dataset)
+    similarity = tf.matmul(valid_embeddings, normalized_embeddings, transpose_b=True)
+    
+    # Add variable initializer.
+    init = tf.global_variables_initializer()
+    
+    # Train the model
+    num_steps = 100
+    with tf.Session() as session:
+        init.run()
+        average_loss = 0
+        for step in range(num_steps):
+            print("\rIteration: {}".format(step), end="\t")
+            batch_inputs, batch_labels, data_index = generate_batch(batch_size, num_skips, skip_window, data_index)
+            feed_dict = {train_inputs : batch_inputs, train_labels : batch_labels}
+    
+            # We perform one update step by evaluating the training op (including it
+            # in the list of returned values for session.run()
+            _, loss_val = session.run([training_op, loss], feed_dict=feed_dict)
+            average_loss += loss_val
+    
+            if step % 20 == 0:
+                if step > 0:
+                    average_loss /= 2000
+                # The average loss is an estimate of the loss over the last 2000 batches.
+                print("Average loss at step ", step, ": ", average_loss)
+                average_loss = 0
+    
+            # Note that this is expensive (~20% slowdown if computed every 500 steps)
+            if step % 100 == 0:
+                sim = similarity.eval()
+                for i in range(valid_size):
+                    valid_word = vocabulary[valid_examples[i]]
+                    top_k = 8 # number of nearest neighbors
+                    nearest = (-sim[i, :]).argsort()[1:top_k+1]
+                    log_str = "Nearest to %s:" % valid_word
+                    for k in range(top_k):
+                        close_word = vocabulary[nearest[k]]
+                        log_str = "%s %s," % (log_str, close_word)
+                    print(log_str)
+        final_embeddings = normalized_embeddings.eval()
+    
+    # np.save("./my_final_embeddings.npy", final_embeddings)
+    # Plot embeddings
+    pdb.set_trace()
+    tsne = TSNE(perplexity=30, n_components=2, init='pca', n_iter=5000)
+    plot_only = 500
+    low_dim_embs = tsne.fit_transform(final_embeddings[:plot_only,:])
+    labels = [vocabulary[i] for i in range(plot_only)]
+    plot_with_labels(low_dim_embs, labels)
+    plt.savefig(PNG_PATH + "embeddings", dpi=300)
+    plt.close()
 
 
 def lstm():
@@ -605,6 +791,46 @@ def reset_graph(seed=42):
     tf.set_random_seed(seed)
     np.random.seed(seed)    
 
+def mkdir_p(path):
+    """Create directories, ok if they already exist.
+    
+    This is for python 2 support. In python >=3.2, simply use:
+    >>> os.makedirs(path, exist_ok=True)
+    """
+    try:
+        os.makedirs(path)
+    except OSError as exc:
+        if exc.errno == errno.EEXIST and os.path.isdir(path):
+            pass
+        else:
+            raise
+
+def fetch_words_data(words_url=WORDS_URL, words_path=WORDS_PATH):
+    os.makedirs(words_path, exist_ok=True)
+    # zip_path = os.path.join(words_path, "words.zip")
+    # Words_short may have been deleted to not send to git
+    zip_path = os.path.join(words_path, "words_short.zip")
+    if not os.path.exists(zip_path):
+        # dont want to actually do this, file too big
+        return
+        urllib.request.urlretrieve(words_url, zip_path)
+    with zipfile.ZipFile(zip_path) as f:
+        data = f.read(f.namelist()[0])
+    return data.decode("ascii").split()
+
+def plot_with_labels(low_dim_embs, labels):
+    assert low_dim_embs.shape[0] >= len(labels), "More labels than embeddings"
+    plt.figure(figsize=(18, 18))  #in inches
+    for i, label in enumerate(labels):
+        x, y = low_dim_embs[i,:]
+        plt.scatter(x, y)
+        plt.annotate(label,
+                     xy=(x, y),
+                     xytext=(5, 2),
+                     textcoords='offset points',
+                     ha='right',
+                     va='bottom')
+
 if __name__ == '__main__':
     # basic_rnns()
     # using_static_rnn()
@@ -619,4 +845,6 @@ if __name__ == '__main__':
     # multi_rnn_cell()
     # distribute_deep_rnn_across_gpu()
     # dropout()
-    lstm()
+    # lstm
+    embeddings_and_nlp()
+    # machine_translation()
