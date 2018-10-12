@@ -1,2 +1,2 @@
-model_checkpoint_path: "my_model_one_at_a_time.ckpt"
-all_model_checkpoint_paths: "my_model_one_at_a_time.ckpt"
+model_checkpoint_path: "my_model_tying_weights.ckpt"
+all_model_checkpoint_paths: "my_model_tying_weights.ckpt"
